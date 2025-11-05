@@ -40,6 +40,26 @@ This plugin supports TWO operational modes that can run simultaneously:
 
 ## Production Features
 
+### Protocol Support
+
+**Important**: This plugin implements **SOCKS5 ONLY**. All other protocols (VMess, Trojan, Shadowsocks, VLESS, Hysteria, TUIC, etc.) are handled by sing-box.
+
+```
+┌─────────────────┐         ┌──────────────────────────────────┐
+│  VPP Plugin     │ SOCKS5  │        Sing-box                   │
+│  (SOCKS5 only)  │◀───────▶│ VMess, Trojan, SS, VLESS, Hyst2  │
+│                 │         │ TUIC, Reality, WireGuard, Tor...  │
+└─────────────────┘         └──────────────────────────────────┘
+```
+
+**Why?**
+- **Separation of Concerns**: VPP handles high-speed packet processing, sing-box handles protocol complexity
+- **Simplicity**: No need to reimplement 20+ protocols in C
+- **Flexibility**: Add new protocols by updating sing-box config only
+- **Performance**: VPP data plane + sing-box protocol layer = best of both worlds
+
+**See**: [`PROTOCOL_GUIDE.md`](PROTOCOL_GUIDE.md) for complete configuration examples of all protocols.
+
 ### 1. Complete SOCKS5 Protocol Implementation
 
 The plugin implements the full SOCKS5 protocol as specified in RFC 1928:
@@ -434,6 +454,35 @@ define singbox_get_stats_reply {
   u64 connection_failures;
 };
 ```
+
+## All Sing-box Protocols Supported
+
+VPP works with ALL 20+ protocols sing-box supports via SOCKS5:
+
+| Protocol | Example Config | Use Case |
+|----------|----------------|----------|
+| **VMess** | See PROTOCOL_GUIDE.md | General purpose, V2Ray |
+| **VLESS+Reality** | See PROTOCOL_GUIDE.md | Maximum stealth, anti-detection |
+| **Trojan** | See PROTOCOL_GUIDE.md | TLS-based stealth |
+| **Shadowsocks2022** | See PROTOCOL_GUIDE.md | Fast & simple |
+| **Hysteria2** | See PROTOCOL_GUIDE.md | High latency networks |
+| **TUIC** | See PROTOCOL_GUIDE.md | QUIC-based |
+| **WireGuard** | See PROTOCOL_GUIDE.md | VPN tunnel |
+| **NaïveProxy** | See PROTOCOL_GUIDE.md | HTTP/3 based |
+| **Tor** | See PROTOCOL_GUIDE.md | Maximum anonymity |
+| **SOCKS5** | Built-in | Standard proxy |
+
+**Configuration is simple:**
+```bash
+# VPP side (always the same)
+singbox set endpoint 127.0.0.1:1080 socks5
+singbox enable GigabitEthernet0/0/0
+
+# Just change sing-box config to switch protocols!
+# sing-box handles VMess/Trojan/Hysteria/etc. conversion
+```
+
+**📖 Complete Guide**: See [`PROTOCOL_GUIDE.md`](PROTOCOL_GUIDE.md) for detailed configuration examples of all 20+ protocols.
 
 ## Integration with Sing-box
 
