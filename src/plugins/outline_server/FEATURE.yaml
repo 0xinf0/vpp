@@ -1,0 +1,38 @@
+---
+name: Outline Server
+maintainer: Internet Mastering & Company <support@internetmastering.com>
+features:
+  - Shadowsocks protocol support with multiple cipher algorithms
+  - Multi-user support on single port with independent access keys
+  - Per-user data limit enforcement and tracking
+  - Prometheus metrics integration for monitoring
+  - Live configuration reload without service restart
+  - Replay attack defense mechanism
+  - TCP and UDP protocol support
+  - VPP CLI and binary API integration
+  - Production-grade process management
+  - Comprehensive statistics and monitoring
+
+description: >
+  The Outline Server plugin integrates the Outline Shadowsocks server
+  (outline-ss-server) with VPP, providing high-performance censorship
+  circumvention capabilities. This plugin enables VPP to run a complete
+  Shadowsocks server with advanced features like multi-user support,
+  per-user data limits, and Prometheus metrics.
+
+  Key capabilities:
+  - Seamless integration with VPP's plugin architecture
+  - Full VPP CLI interface for server management
+  - Binary API for programmatic control
+  - Support for multiple listening ports with different configurations
+  - Dynamic key management without service interruption
+  - Real-time statistics and performance monitoring
+  - Built-in security features including replay defense
+
+  The plugin manages the outline-ss-server as a child process and provides
+  a comprehensive management interface through VPP's native CLI and API,
+  making it easy to deploy and manage Shadowsocks services as part of a
+  VPP-based network infrastructure.
+
+state: production
+properties: [API, CLI, MULTITHREAD]
