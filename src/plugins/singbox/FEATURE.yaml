@@ -1,0 +1,19 @@
+---
+name: Sing-box Integration Plugin
+maintainer: Internet Mastering & Company
+features:
+  - Sing-box proxy integration
+  - SOCKS5 protocol support
+  - HTTP proxy support
+  - Per-interface packet redirection
+  - Configurable proxy endpoints
+  - Traffic statistics and monitoring
+
+description: "Integration plugin for sing-box universal proxy platform.
+              Provides VPP integration with sing-box (https://github.com/SagerNet/sing-box)
+              enabling advanced protocol support including SOCKS5, VMess, Trojan,
+              Shadowsocks, and other proxy protocols. Allows selective traffic
+              redirection to sing-box instances with per-interface configuration
+              and comprehensive statistics."
+
+state: development
