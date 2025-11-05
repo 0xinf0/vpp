@@ -88,3 +88,69 @@ define singbox_get_stats_reply
   u64 bytes_redirected;
   u64 connection_failures;
 };
+
+/* ========== SERVER MODE API ========== */
+
+/**
+ * @brief Start SOCKS5 server mode
+ * @param client_index - opaque cookie to identify the sender
+ * @param context - sender context, to match reply w/ request
+ * @param listen_addr - IPv4 address to listen on
+ * @param listen_port - TCP port to listen on
+ * @param require_auth - Require username/password authentication
+ * @param username - Username for authentication (if required)
+ * @param password - Password for authentication (if required)
+ */
+autoreply define singbox_server_start
+{
+  u32 client_index;
+  u32 context;
+  vl_api_ip4_address_t listen_addr;
+  u16 listen_port;
+  bool require_auth;
+  string username[256];
+  string password[256];
+};
+
+/**
+ * @brief Stop SOCKS5 server mode
+ * @param client_index - opaque cookie to identify the sender
+ * @param context - sender context, to match reply w/ request
+ */
+autoreply define singbox_server_stop
+{
+  u32 client_index;
+  u32 context;
+};
+
+/**
+ * @brief Get SOCKS5 server statistics
+ * @param client_index - opaque cookie to identify the sender
+ * @param context - sender context, to match reply w/ request
+ */
+define singbox_server_get_stats
+{
+  u32 client_index;
+  u32 context;
+};
+
+/**
+ * @brief Reply to server statistics request
+ * @param context - sender context which was passed in the request
+ * @param retval - return code
+ * @param is_running - Server is running
+ * @param connections_accepted - Total connections accepted
+ * @param connections_rejected - Total connections rejected
+ * @param auth_failures - Total authentication failures
+ * @param bytes_forwarded - Total bytes forwarded
+ */
+define singbox_server_get_stats_reply
+{
+  u32 context;
+  i32 retval;
+  bool is_running;
+  u64 connections_accepted;
+  u64 connections_rejected;
+  u64 auth_failures;
+  u64 bytes_forwarded;
+};
