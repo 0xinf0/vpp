@@ -1,0 +1,214 @@
+/*
+ * Copyright (c) 2024 Internet Mastering & Company
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at:
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/**
+ * @file outline_server.api
+ * @brief VPP Binary API definitions for Outline Server plugin.
+ */
+
+option version = "1.0.0";
+
+import "vnet/interface_types.api";
+import "vnet/ip/ip_types.api";
+
+/** \brief Enable/Disable outline server instance
+    @param client_index - opaque cookie to identify the sender
+    @param context - sender context, to match reply w/ request
+    @param enable - enable if non-zero, else disable
+    @param config_file - path to configuration file
+    @param metrics_port - prometheus metrics port (0 to disable)
+*/
+autoreply define outline_server_enable_disable
+{
+  u32 client_index;
+  u32 context;
+  bool enable;
+  string config_file[256];
+  u16 metrics_port;
+};
+
+/** \brief Add a new shadowsocks server port
+    @param client_index - opaque cookie to identify the sender
+    @param context - sender context, to match reply w/ request
+    @param port - port number to listen on
+    @param password - shadowsocks password
+    @param cipher - encryption cipher method
+    @param timeout - connection timeout in seconds
+*/
+define outline_server_add_port
+{
+  u32 client_index;
+  u32 context;
+  u16 port;
+  string password[256];
+  string cipher[32];
+  u32 timeout;
+};
+
+/** \brief Add port reply
+    @param context - sender context, to match reply w/ request
+    @param retval - return value for request
+    @param port_id - assigned port identifier
+*/
+define outline_server_add_port_reply
+{
+  u32 context;
+  i32 retval;
+  u32 port_id;
+};
+
+/** \brief Delete a shadowsocks server port
+    @param client_index - opaque cookie to identify the sender
+    @param context - sender context, to match reply w/ request
+    @param port_id - port identifier to delete
+*/
+autoreply define outline_server_delete_port
+{
+  u32 client_index;
+  u32 context;
+  u32 port_id;
+};
+
+/** \brief Add/Update a user access key
+    @param client_index - opaque cookie to identify the sender
+    @param context - sender context, to match reply w/ request
+    @param key_id - unique key identifier
+    @param port_id - port to associate with this key
+    @param password - shadowsocks password for this key
+    @param data_limit - data limit in bytes (0 for unlimited)
+*/
+autoreply define outline_server_add_key
+{
+  u32 client_index;
+  u32 context;
+  string key_id[64];
+  u32 port_id;
+  string password[256];
+  u64 data_limit;
+};
+
+/** \brief Delete a user access key
+    @param client_index - opaque cookie to identify the sender
+    @param context - sender context, to match reply w/ request
+    @param key_id - key identifier to delete
+*/
+autoreply define outline_server_delete_key
+{
+  u32 client_index;
+  u32 context;
+  string key_id[64];
+};
+
+/** \brief Get server statistics
+    @param client_index - opaque cookie to identify the sender
+    @param context - sender context, to match reply w/ request
+*/
+define outline_server_get_stats
+{
+  u32 client_index;
+  u32 context;
+};
+
+/** \brief Server statistics reply
+    @param context - sender context, to match reply w/ request
+    @param retval - return value for request
+    @param is_running - server running status
+    @param total_connections - total connections handled
+    @param active_connections - currently active connections
+    @param bytes_transferred - total bytes transferred
+    @param keys_count - number of active keys
+*/
+define outline_server_get_stats_reply
+{
+  u32 context;
+  i32 retval;
+  bool is_running;
+  u64 total_connections;
+  u32 active_connections;
+  u64 bytes_transferred;
+  u32 keys_count;
+};
+
+/** \brief Dump all configured ports
+    @param client_index - opaque cookie to identify the sender
+    @param context - sender context, to match reply w/ request
+*/
+define outline_server_ports_dump
+{
+  u32 client_index;
+  u32 context;
+};
+
+/** \brief Port details
+    @param context - sender context, to match reply w/ request
+    @param port_id - port identifier
+    @param port - port number
+    @param cipher - encryption cipher
+    @param connections - active connections on this port
+    @param bytes_transferred - bytes transferred through this port
+*/
+define outline_server_ports_details
+{
+  u32 context;
+  u32 port_id;
+  u16 port;
+  string cipher[32];
+  u32 connections;
+  u64 bytes_transferred;
+};
+
+/** \brief Dump all configured keys
+    @param client_index - opaque cookie to identify the sender
+    @param context - sender context, to match reply w/ request
+*/
+define outline_server_keys_dump
+{
+  u32 client_index;
+  u32 context;
+};
+
+/** \brief Key details
+    @param context - sender context, to match reply w/ request
+    @param key_id - key identifier
+    @param port_id - associated port
+    @param data_limit - data limit in bytes
+    @param data_used - data used in bytes
+    @param is_active - key active status
+*/
+define outline_server_keys_details
+{
+  u32 context;
+  string key_id[64];
+  u32 port_id;
+  u64 data_limit;
+  u64 data_used;
+  bool is_active;
+};
+
+/** \brief Set server configuration
+    @param client_index - opaque cookie to identify the sender
+    @param context - sender context, to match reply w/ request
+    @param replay_history - replay history size
+    @param tcp_timeout - TCP timeout in seconds
+    @param udp_timeout - UDP timeout in seconds
+*/
+autoreply define outline_server_set_config
+{
+  u32 client_index;
+  u32 context;
+  u32 replay_history;
+  u32 tcp_timeout;
+  u32 udp_timeout;
+};
