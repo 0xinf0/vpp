@@ -1,6 +1,6 @@
 ---
 name: Sing-box Integration Plugin
-maintainer: Internet Mastering & Company
+maintainer: Internet Mastering & Company, Inc.
 features:
   - Sing-box proxy integration
   - SOCKS5 protocol support

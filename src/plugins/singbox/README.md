@@ -329,7 +329,7 @@ Contributions are welcome! Areas where help is needed:
 
 ## License
 
-Copyright (c) 2025 Internet Mastering & Company
+Copyright (c) 2025 Internet Mastering & Company, Inc.
 
 Licensed under the Apache License, Version 2.0. See LICENSE file for details.
 
