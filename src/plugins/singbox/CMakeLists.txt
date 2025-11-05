@@ -25,6 +25,8 @@ add_vpp_plugin(singbox
   SOURCES
   singbox.c
   node.c
+  socks5.c
+  session.c
 
   MULTIARCH_SOURCES
   node.c
