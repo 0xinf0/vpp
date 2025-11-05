@@ -2,18 +2,41 @@
 
 ## Overview
 
-The Sing-box Integration Plugin is a **production-grade** VPP plugin that provides seamless integration with [sing-box](https://github.com/SagerNet/sing-box), a universal proxy platform. This plugin features complete SOCKS5 protocol implementation (RFC 1928), robust session management, connection pooling, and comprehensive error handling suitable for production deployments.
+The Sing-box Integration Plugin is a **production-grade dual-mode** VPP plugin that provides complete SOCKS5 proxy functionality. It operates in BOTH **CLIENT** and **SERVER** modes, offering maximum flexibility for network architectures.
+
+## 🔄 Dual-Mode Architecture
+
+This plugin supports TWO operational modes that can run simultaneously:
+
+### CLIENT Mode - VPP connects TO sing-box
+```
+[VPP] ──SOCKS5──▶ [sing-box Server] ──▶ Internet
+```
+**Use Case**: Redirect VPP traffic through a sing-box proxy for protocol obfuscation, privacy, or accessing external proxies.
+
+### SERVER Mode - VPP acts AS a SOCKS5 proxy
+```
+[sing-box Client] ──SOCKS5──▶ [VPP] ──▶ Internet
+```
+**Use Case**: VPP becomes a SOCKS5 server that sing-box clients (or any SOCKS5 client) can connect to.
+
+### Both Modes Simultaneously
+```
+[sing-box Client] ──▶ [VPP SERVER] ──▶ [VPP CLIENT] ──▶ [sing-box Server] ──▶ Internet
+```
+**Use Case**: VPP acts as a middleman proxy, accepting connections and forwarding them through another proxy.
 
 ### Key Highlights
 
+- **✅ Dual-Mode**: Both CLIENT and SERVER in one plugin
 - **✅ Production-Ready**: Complete SOCKS5 protocol implementation with authentication
 - **✅ RFC 1928 Compliant**: Full SOCKS5 specification support
 - **✅ Session Management**: Enterprise-grade session lifecycle management
-- **✅ Connection Pooling**: Reuse connections for optimal performance
+- **✅ Connection Pooling**: Reuse connections for optimal performance (client mode)
 - **✅ Thread-Safe**: Lock-protected session operations
 - **✅ Performance Optimized**: Cache-aligned data structures
 - **✅ Error Handling**: Comprehensive error detection and recovery
-- **✅ Monitoring**: Detailed statistics and metrics
+- **✅ Monitoring**: Detailed statistics and metrics for both modes
 
 ## Production Features
 
@@ -197,10 +220,11 @@ make build-debug
 
 ```
 Building: singbox_plugin.so
-├── singbox.o      (main plugin)
-├── socks5.o       (SOCKS5 protocol)
-├── session.o      (session management)
-└── node.o         (packet processing)
+├── singbox.o         (main plugin)
+├── socks5.o          (SOCKS5 client protocol)
+├── socks5_server.o   (SOCKS5 server protocol)
+├── session.o         (session management)
+└── node.o            (packet processing)
 ```
 
 Install location:
@@ -209,7 +233,11 @@ Install location:
 
 ## Configuration
 
-### Setting Global Endpoint
+### CLIENT Mode Configuration
+
+Configure VPP to connect TO a sing-box proxy server.
+
+#### Setting Global Endpoint
 
 Configure a default sing-box endpoint:
 
@@ -223,7 +251,7 @@ With authentication:
 vpp# singbox set endpoint 10.0.0.5:1080 socks5 username myuser password mypass
 ```
 
-### Enabling on an Interface
+#### Enabling on an Interface
 
 Enable with default endpoint:
 
@@ -241,6 +269,53 @@ Set connection limits:
 
 ```bash
 vpp# singbox enable GigabitEthernet0/0/0 max-connections 1000
+```
+
+### SERVER Mode Configuration
+
+Configure VPP to act AS a SOCKS5 proxy server.
+
+#### Start Server Without Authentication
+
+```bash
+vpp# singbox server start 0.0.0.0:1080
+```
+
+Listen on specific address:
+
+```bash
+vpp# singbox server start 127.0.0.1:1080
+```
+
+#### Start Server With Authentication
+
+```bash
+vpp# singbox server start 0.0.0.0:1080 auth username myuser password mypass
+```
+
+#### Stop Server
+
+```bash
+vpp# singbox server stop
+```
+
+#### View Server Status
+
+```bash
+vpp# show singbox server
+```
+
+Example output:
+
+```
+SOCKS5 Server Status: Running
+  Listen address: 0.0.0.0:1080
+  Authentication: Required
+  Connections accepted: 1,234
+  Connections rejected: 5
+  Auth failures: 3
+  Bytes forwarded: 9,876,543,210
+  Active sessions: 42
 ```
 
 ### Advanced Configuration
@@ -488,29 +563,93 @@ heapsize 4G
 
 ## Use Cases
 
-### 1. Enterprise Privacy
+### CLIENT Mode Use Cases
 
-Route all corporate traffic through secure proxies:
+#### 1. Enterprise Privacy (Outbound Proxy)
+
+Route all corporate traffic through secure sing-box proxies:
 
 ```bash
-singbox enable GigabitEthernet0/0/0 proxy secure-proxy.corp.com:1080
+# VPP CLIENT connecting to external sing-box
+singbox set endpoint secure-proxy.corp.com:1080 socks5 username corp password secret
+singbox enable GigabitEthernet0/0/0
 ```
 
-### 2. Geographic Load Balancing
+#### 2. Protocol Obfuscation
+
+Use sing-box's VMess/Trojan protocols for traversing restrictive networks:
+
+```bash
+# VPP connects to sing-box which handles protocol obfuscation
+singbox enable wan0 proxy obfuscated-proxy.example.com:443
+```
+
+#### 3. Geographic Load Balancing
 
 Distribute traffic across multiple sing-box instances in different regions.
 
-### 3. Protocol Obfuscation
+### SERVER Mode Use Cases
 
-Use sing-box's protocol capabilities for traversing restrictive networks.
+#### 4. VPP as Central Proxy Infrastructure
 
-### 4. Traffic Analysis
+VPP acts as a high-performance SOCKS5 server for entire network:
 
-Monitor and analyze traffic patterns through centralized proxy infrastructure.
+```bash
+# VPP SERVER accepting sing-box client connections
+singbox server start 0.0.0.0:1080 auth username netadmin password secure123
+```
 
-### 5. Security Enforcement
+Applications:
+- **Centralized Gateway**: All clients connect to VPP for internet access
+- **Authentication & Audit**: Track and authenticate all proxy users
+- **High Performance**: VPP's packet processing for proxy operations
 
-Enforce security policies through proxy-based inspection.
+#### 5. Sing-box Integration Point
+
+sing-box clients connect to VPP for high-speed proxying:
+
+```
+[Mobile sing-box] ──┐
+[Desktop sing-box] ──┼──▶ [VPP SOCKS5 Server] ──▶ Internet
+[IoT sing-box]    ──┘
+```
+
+#### 6. Proxy Chain (Both Modes)
+
+VPP acts as middleman - accept connections AND forward through another proxy:
+
+```bash
+# Start SERVER to accept connections
+singbox server start 0.0.0.0:8080 auth username client password pass1
+
+# Configure CLIENT to forward to upstream proxy
+singbox set endpoint upstream-proxy.com:1080 socks5 username upstream password pass2
+singbox enable GigabitEthernet0/0/0
+```
+
+Architecture:
+```
+[sing-box client] → [VPP SERVER:8080] → [VPP CLIENT] → [Upstream Proxy] → Internet
+```
+
+#### 7. Security Enforcement
+
+Server mode with authentication for security policies:
+
+```bash
+# Require authentication for all proxy access
+singbox server start 10.0.0.1:1080 auth username security password complex_pass_123
+```
+
+#### 8. Traffic Analysis & Monitoring
+
+Monitor all proxy traffic through VPP's built-in statistics:
+
+```bash
+# Server mode with monitoring
+show singbox server
+show runtime
+```
 
 ## Troubleshooting
 

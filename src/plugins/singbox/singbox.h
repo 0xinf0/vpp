@@ -255,6 +255,50 @@ typedef struct
   /** Enable verbose logging */
   u8 verbose;
 
+  /* ========== SERVER MODE ========== */
+
+  /** Server mode enabled */
+  u8 server_mode_enabled;
+
+  /** Server listening address */
+  ip4_address_t server_listen_addr;
+
+  /** Server listening port */
+  u16 server_listen_port;
+
+  /** Server application index */
+  u32 server_app_index;
+
+  /** Server authentication required */
+  u8 server_require_auth;
+
+  /** Server username */
+  u8 server_username[256];
+
+  /** Server password */
+  u8 server_password[256];
+
+  /** Server username length */
+  u8 server_username_len;
+
+  /** Server password length */
+  u8 server_password_len;
+
+  /** Server session pool for inbound connections */
+  singbox_session_t *server_sessions;
+
+  /** Server session hash: session_handle -> session_index */
+  uword *server_session_by_handle;
+
+  /** Server lock */
+  clib_spinlock_t server_lock;
+
+  /** Server statistics */
+  u64 server_connections_accepted;
+  u64 server_connections_rejected;
+  u64 server_auth_failures;
+  u64 server_bytes_forwarded;
+
 } singbox_main_t;
 
 /** Global instance of sing-box plugin */
@@ -388,6 +432,70 @@ singbox_get_interface_config (singbox_main_t *sm, u32 sw_if_index)
     return NULL;
   return &sm->interface_configs[sw_if_index];
 }
+
+/* ========== SERVER MODE FUNCTIONS ========== */
+
+/**
+ * @brief Start SOCKS5 server
+ *
+ * @param sm - sing-box main structure
+ * @param listen_addr - Address to listen on
+ * @param listen_port - Port to listen on
+ * @param require_auth - Require authentication
+ * @param username - Username (if auth required)
+ * @param password - Password (if auth required)
+ * @return 0 on success, error code otherwise
+ */
+int singbox_server_start (singbox_main_t *sm, ip4_address_t *listen_addr,
+                          u16 listen_port, u8 require_auth, u8 *username,
+                          u8 *password);
+
+/**
+ * @brief Stop SOCKS5 server
+ *
+ * @param sm - sing-box main structure
+ * @return 0 on success, error code otherwise
+ */
+int singbox_server_stop (singbox_main_t *sm);
+
+/**
+ * @brief Process SOCKS5 server greeting from client
+ *
+ * @param sm - sing-box main structure
+ * @param session - Server session
+ * @param data - Request data
+ * @param len - Data length
+ * @return 0 on success, error code otherwise
+ */
+int singbox_server_process_greeting (singbox_main_t *sm,
+                                     singbox_session_t *session, u8 *data,
+                                     u32 len);
+
+/**
+ * @brief Process SOCKS5 server authentication from client
+ *
+ * @param sm - sing-box main structure
+ * @param session - Server session
+ * @param data - Auth data
+ * @param len - Data length
+ * @return 0 on success, error code otherwise
+ */
+int singbox_server_process_auth (singbox_main_t *sm,
+                                 singbox_session_t *session, u8 *data,
+                                 u32 len);
+
+/**
+ * @brief Process SOCKS5 server connect request from client
+ *
+ * @param sm - sing-box main structure
+ * @param session - Server session
+ * @param data - Connect request data
+ * @param len - Data length
+ * @return 0 on success, error code otherwise
+ */
+int singbox_server_process_connect (singbox_main_t *sm,
+                                    singbox_session_t *session, u8 *data,
+                                    u32 len);
 
 /**
  * @brief Format session state
