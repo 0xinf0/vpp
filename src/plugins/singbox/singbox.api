@@ -1,0 +1,90 @@
+/* Hey Emacs use -*- mode: C -*- */
+/*
+ * Copyright (c) 2025 Internet Mastering & Company, Inc.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at:
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/**
+ * @file singbox.api
+ * @brief VPP Binary API definitions for sing-box plugin
+ */
+
+option version = "1.0.0";
+import "vnet/interface_types.api";
+import "vnet/ip/ip_types.api";
+
+/**
+ * @brief Enable/disable sing-box on an interface
+ * @param client_index - opaque cookie to identify the sender
+ * @param context - sender context, to match reply w/ request
+ * @param sw_if_index - interface to enable/disable sing-box on
+ * @param enable_disable - 1 = enable, 0 = disable
+ * @param proxy_addr - IPv4 address of sing-box proxy server
+ * @param proxy_port - TCP port of sing-box proxy server
+ */
+autoreply define singbox_enable_disable
+{
+  u32 client_index;
+  u32 context;
+  vl_api_interface_index_t sw_if_index;
+  bool enable_disable;
+  vl_api_ip4_address_t proxy_addr;
+  u16 proxy_port;
+};
+
+/**
+ * @brief Set global sing-box endpoint
+ * @param client_index - opaque cookie to identify the sender
+ * @param context - sender context, to match reply w/ request
+ * @param proxy_addr - IPv4 address of sing-box proxy server
+ * @param proxy_port - TCP port of sing-box proxy server
+ * @param protocol_type - Protocol type (0=SOCKS5, 1=HTTP)
+ */
+autoreply define singbox_set_endpoint
+{
+  u32 client_index;
+  u32 context;
+  vl_api_ip4_address_t proxy_addr;
+  u16 proxy_port;
+  u8 protocol_type;
+};
+
+/**
+ * @brief Get sing-box interface statistics
+ * @param client_index - opaque cookie to identify the sender
+ * @param context - sender context, to match reply w/ request
+ * @param sw_if_index - interface index to query
+ */
+define singbox_get_stats
+{
+  u32 client_index;
+  u32 context;
+  vl_api_interface_index_t sw_if_index;
+};
+
+/**
+ * @brief Reply to sing-box statistics request
+ * @param context - sender context which was passed in the request
+ * @param retval - return code
+ * @param packets_redirected - total packets redirected
+ * @param bytes_redirected - total bytes redirected
+ * @param connection_failures - total connection failures
+ */
+define singbox_get_stats_reply
+{
+  u32 context;
+  i32 retval;
+  u64 packets_redirected;
+  u64 bytes_redirected;
+  u64 connection_failures;
+};

@@ -1,0 +1,22 @@
+---
+name: Sing-box Integration Plugin
+maintainer: Internet Mastering & Company, Inc.
+features:
+  - Production-grade SOCKS5 protocol implementation (RFC 1928)
+  - Session management with connection pooling
+  - Per-interface traffic redirection
+  - Configurable proxy endpoints with authentication
+  - Connection lifecycle management
+  - Comprehensive traffic statistics and monitoring
+  - Connection timeout and retry handling
+  - Thread-safe session management
+  - Cache-optimized data structures
+
+description: "Production-grade integration plugin for sing-box universal proxy platform.
+              Provides VPP integration with sing-box (https://github.com/SagerNet/sing-box)
+              with complete SOCKS5 protocol support including authentication. Features
+              robust session management, connection pooling, comprehensive error handling,
+              and production-ready performance optimizations. Supports selective traffic
+              redirection to sing-box instances with per-interface configuration."
+
+state: production
