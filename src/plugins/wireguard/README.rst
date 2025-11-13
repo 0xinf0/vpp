@@ -1,56 +1,679 @@
 .. _wireguard_plugin_doc:
 
-Wireguard VPP Plugin - Enhanced Edition
-========================================
+VPP AmneziaWG - Obfuscated WireGuard VPN
+=========================================
 
-Overview
---------
+A high-performance VPN implementation with DPI evasion and protocol masquerading.
 
-This plugin is an enhanced implementation of the `WireGuard protocol <https://www.wireguard.com/>`__
-for VPP with **protocol obfuscation**, **transport flexibility**, and **hardware acceleration** support.
+**Purpose:** Create secure WireGuard tunnels that bypass deep packet inspection and censorship.
 
-This implementation is based on `wireguard-openbsd <https://git.zx2c4.com/wireguard-openbsd/>`__
-with additional features for censorship circumvention and performance optimization.
+Quick Start - Establish Your First Tunnel
+------------------------------------------
 
-**Key Enhancements:**
+This guide will walk you through creating a working WireGuard tunnel step-by-step.
 
-- ✅ Full **AmneziaWG 1.5 compatibility** - Protocol masquerading via i-headers
-- ✅ **Per-peer obfuscation** - Fine-grained obfuscation control
-- ✅ **TCP transport option** - Bypass UDP-blocking firewalls
-- ✅ **Intel QAT acceleration** - Offload TLS handshakes to hardware
-- ✅ **100% backward compatible** - Standard WireGuard clients work unchanged
+**What You Get:**
 
-Crypto
-------
+- ✅ WireGuard protocol (100% compatible with standard clients)
+- ✅ AmneziaWG obfuscation (defeat DPI and protocol fingerprinting)
+- ✅ Protocol masquerading (mimic QUIC, DNS, TLS traffic)
+- ✅ TCP transport option (bypass UDP-blocking firewalls)
+- ✅ High performance (VPP data plane, multi-Gbps throughput)
 
-**Core Crypto Protocols:**
+Prerequisites
+-------------
 
--  blake2s `[Source] <https://github.com/BLAKE2/BLAKE2>`__
--  curve25519 (via OpenSSL)
--  chachapoly1305 (via OpenSSL)
+::
 
-**Hardware Acceleration:**
+   # Ubuntu 24.04 LTS or 22.04 LTS
+   # Minimum: 2 GB RAM, 2 CPU cores
 
--  Intel QuickAssist Technology (QAT) for TLS handshake offload
--  DPDK cryptodev for symmetric crypto operations
--  Automatic fallback to software crypto if QAT unavailable
+   sudo apt-get update
+   sudo apt-get install -y build-essential git \
+     python3 wireguard-tools iproute2 iputils-ping
+
+Building VPP
+------------
+
+::
+
+   # Clone repository
+   git clone https://github.com/0xinf0/vpp.git
+   cd vpp
+
+   # Install dependencies
+   make install-dep
+
+   # Build VPP (takes 10-15 minutes)
+   make build
+
+   # Verify wireguard plugin exists
+   ls build-root/install-vpp-native/vpp/lib/vpp_plugins/wireguard_plugin.so
+
+Tunnel Setup Tutorial (Network Namespaces)
+-------------------------------------------
+
+This creates a complete VPP-to-VPP tunnel using network namespaces for testing.
+
+**Topology:**
+
+::
+
+   [ns-server]                          [ns-client]
+      VPP1                                 VPP2
+   10.100.0.1/24 <--- WireGuard ---> 10.100.0.2/24
+       |                                     |
+   veth-srv (10.0.1.1)             veth-cli (10.0.1.2)
+       |                                     |
+       +------------- veth pair -------------+
+
+**Step 1: Create Network Environment**
+
+::
+
+   # Create namespaces
+   sudo ip netns add ns-server
+   sudo ip netns add ns-client
+
+   # Create veth pair
+   sudo ip link add veth-srv type veth peer name veth-cli
+
+   # Move to namespaces
+   sudo ip link set veth-srv netns ns-server
+   sudo ip link set veth-cli netns ns-client
+
+   # Configure IPs
+   sudo ip netns exec ns-server ip addr add 10.0.1.1/24 dev veth-srv
+   sudo ip netns exec ns-client ip addr add 10.0.1.2/24 dev veth-cli
+
+   # Bring up interfaces
+   sudo ip netns exec ns-server ip link set dev veth-srv up
+   sudo ip netns exec ns-server ip link set dev lo up
+   sudo ip netns exec ns-client ip link set dev veth-cli up
+   sudo ip netns exec ns-client ip link set dev lo up
+
+   # Test connectivity
+   sudo ip netns exec ns-server ping -c 2 10.0.1.2
+   # Expected: 0% packet loss
+
+**Step 2: Generate Keys**
+
+::
+
+   mkdir -p /tmp/wg-keys && cd /tmp/wg-keys
+
+   # Server keys
+   wg genkey | tee srv.key | wg pubkey > srv.pub
+
+   # Client keys
+   wg genkey | tee cli.key | wg pubkey > cli.pub
+
+   # Save to variables
+   export SRV_PRIV=$(cat srv.key)
+   export SRV_PUB=$(cat srv.pub)
+   export CLI_PRIV=$(cat cli.key)
+   export CLI_PUB=$(cat cli.pub)
+
+   # Display keys
+   echo "Server Private: $SRV_PRIV"
+   echo "Server Public:  $SRV_PUB"
+   echo "Client Private: $CLI_PRIV"
+   echo "Client Public:  $CLI_PUB"
+
+**Step 3: Create VPP Configs**
+
+Server config ``/tmp/srv.conf``:
+
+::
+
+   unix {
+     nodaemon
+     log /tmp/vpp-srv.log
+     cli-listen /tmp/vpp-srv.sock
+   }
+   cpu {
+     main-core 0
+     corelist-workers 1
+   }
+   plugins {
+     plugin default { disable }
+     plugin af_packet_plugin.so { enable }
+     plugin wireguard_plugin.so { enable }
+   }
+
+Client config ``/tmp/cli.conf``:
+
+::
+
+   unix {
+     nodaemon
+     log /tmp/vpp-cli.log
+     cli-listen /tmp/vpp-cli.sock
+   }
+   cpu {
+     main-core 0
+     corelist-workers 2
+   }
+   plugins {
+     plugin default { disable }
+     plugin af_packet_plugin.so { enable }
+     plugin wireguard_plugin.so { enable }
+   }
+
+**Step 4: Start VPP Instances**
+
+Terminal 1 (Server):
+
+::
+
+   sudo ip netns exec ns-server \
+     ./build-root/install-vpp-native/vpp/bin/vpp -c /tmp/srv.conf
+
+Terminal 2 (Client):
+
+::
+
+   sudo ip netns exec ns-client \
+     ./build-root/install-vpp-native/vpp/bin/vpp -c /tmp/cli.conf
+
+**Step 5: Configure Server**
+
+Terminal 3:
+
+::
+
+   # Alias for convenience
+   alias vcli-srv='sudo ./build-root/install-vpp-native/vpp/bin/vppctl -s /tmp/vpp-srv.sock'
+
+   # Setup host interface
+   vcli-srv create host-interface name veth-srv
+   vcli-srv set int state host-veth-srv up
+   vcli-srv set int ip address host-veth-srv 10.0.1.1/24
+
+   # Create WireGuard interface
+   vcli-srv wireguard create listen-port 51820 private-key $SRV_PRIV src 10.0.1.1
+   # Output: wg0
+
+   # Configure WireGuard interface
+   vcli-srv set int state wg0 up
+   vcli-srv set int ip address wg0 10.100.0.1/24
+
+   # Add peer
+   vcli-srv wireguard peer add wg0 \
+     public-key $CLI_PUB \
+     endpoint 10.0.1.2 \
+     allowed-ip 10.100.0.0/24 \
+     dst-port 51820 \
+     persistent-keepalive 25
+
+   # Verify
+   vcli-srv show wireguard peer
+
+**Step 6: Configure Client**
+
+Terminal 4:
+
+::
+
+   alias vcli-cli='sudo ./build-root/install-vpp-native/vpp/bin/vppctl -s /tmp/vpp-cli.sock'
+
+   # Setup host interface
+   vcli-cli create host-interface name veth-cli
+   vcli-cli set int state host-veth-cli up
+   vcli-cli set int ip address host-veth-cli 10.0.1.2/24
+
+   # Create WireGuard interface
+   vcli-cli wireguard create listen-port 51820 private-key $CLI_PRIV src 10.0.1.2
+   # Output: wg0
+
+   # Configure WireGuard interface
+   vcli-cli set int state wg0 up
+   vcli-cli set int ip address wg0 10.100.0.2/24
+
+   # Add peer
+   vcli-cli wireguard peer add wg0 \
+     public-key $SRV_PUB \
+     endpoint 10.0.1.1 \
+     allowed-ip 10.100.0.0/24 \
+     dst-port 51820 \
+     persistent-keepalive 25
+
+   # Verify
+   vcli-cli show wireguard peer
+
+**Step 7: Test Tunnel**
+
+::
+
+   # Ping from server to client
+   vcli-srv ping 10.100.0.2
+
+   # Expected output:
+   # 116 bytes from 10.100.0.2: icmp_seq=1 ttl=64 time=.4330 ms
+   # Statistics: 5 sent, 5 received, 0% packet loss
+
+   # Ping from client to server
+   vcli-cli ping 10.100.0.1
+
+   # Check peer status
+   vcli-srv show wireguard peer
+   # Should show: rx/tx bytes, last handshake timestamp
+
+**SUCCESS!** Your WireGuard tunnel is working.
+
+AmneziaWG Obfuscation
+---------------------
+
+Now add obfuscation to defeat DPI:
+
+**Basic Obfuscation (Junk Headers):**
+
+::
+
+   # On server
+   vcli-srv set wireguard awg wg0 enabled 1
+   vcli-srv set wireguard awg wg0 junk-size init 16
+   vcli-srv set wireguard awg wg0 junk-size response 16
+   vcli-srv set wireguard awg wg0 junk-size data 8
+
+   # Verify
+   vcli-srv show wireguard awg wg0
+
+**Protocol Masquerading (Mimic QUIC):**
+
+::
+
+   # Configure i-header chain
+   vcli-srv set wireguard i-header wg0 i1 \
+     "<b 0xc00000000108dcf709c86520ee5ac68b><r 16><c><t>"
+
+   vcli-srv set wireguard i-header wg0 i2 "<r 32><c>"
+
+   # View config
+   vcli-srv show wireguard awg wg0
+
+**Tag Reference:**
+
+::
+
+   <b 0xHEX>  - Literal hex bytes
+   <c>        - Counter (8 bytes, big-endian)
+   <t>        - Timestamp (8 bytes, unix time)
+   <r N>      - N random bytes
+   <rc N>     - N random alphanumeric chars
+   <rd N>     - N random digits
+
+VPP Server + Standard Client
+-----------------------------
+
+Use VPP as server, connect with any WireGuard client:
+
+**Server (VPP):**
+
+::
+
+   # Start VPP
+   sudo ./build-root/install-vpp-native/vpp/bin/vpp
+
+   # Configure (replace with your IPs)
+   sudo vppctl set int state eth0 up
+   sudo vppctl set int ip address eth0 203.0.113.100/24
+
+   # Create WireGuard
+   sudo vppctl wireguard create \
+     listen-port 51820 \
+     private-key <server_private_key> \
+     src 203.0.113.100
+
+   sudo vppctl set int state wg0 up
+   sudo vppctl set int ip address wg0 10.100.0.1/24
+
+   # Add client peer
+   sudo vppctl wireguard peer add wg0 \
+     public-key <client_public_key> \
+     allowed-ip 10.100.0.2/32 \
+     dst-port 51820 \
+     persistent-keepalive 25
+
+**Client (Standard WireGuard):**
+
+``/etc/wireguard/wg0.conf``:
+
+::
+
+   [Interface]
+   PrivateKey = <client_private_key>
+   Address = 10.100.0.2/24
+
+   [Peer]
+   PublicKey = <server_public_key>
+   Endpoint = 203.0.113.100:51820
+   AllowedIPs = 0.0.0.0/0
+   PersistentKeepalive = 25
+
+::
+
+   sudo wg-quick up wg0
+   ping 10.100.0.1
 
 Features
 --------
 
-1. AmneziaWG Protocol Obfuscation
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+**1. AmneziaWG Protocol Obfuscation**
 
-**Protocol Masquerading** - Make WireGuard traffic indistinguishable from legitimate protocols:
+Make traffic indistinguishable from legitimate protocols:
 
-- **i-Header Signature Chains** - Send crafted UDP packets (i1-i5) before special handshakes
-- **Junk Header Insertion** - Prepend random data to WireGuard packets
-- **Magic Header Replacement** - Replace WireGuard's type field with custom values
-- **Tag-based Template System** - Flexible packet crafting with dynamic content
+- i-Header chains (i1-i5) - Protocol mimicking packets
+- Junk headers - Random data prepended to packets
+- Magic headers - Replace WireGuard type field
+- Junk packets - Random UDP packets before handshakes
 
 **What This Defeats:**
 
 - Protocol fingerprinting (DPI systems)
+- Statistical traffic analysis
+- WireGuard-specific blocking
+
+**2. TCP Transport**
+
+Bypass UDP-blocking firewalls:
+
+::
+
+   sudo vppctl wireguard create \
+     listen-port 443 \
+     private-key <key> \
+     src <ip> \
+     transport tcp
+
+**3. Hardware Acceleration**
+
+- Intel QAT support for crypto offload
+- DPDK cryptodev integration
+- 3-5x CPU reduction for handshakes
+
+Command Reference
+-----------------
+
+**Interface Commands:**
+
+::
+
+   # Create interface
+   wireguard create listen-port <port> private-key <key> src <ip> [transport tcp|udp]
+
+   # Delete interface
+   wireguard delete <interface>
+
+   # Show interfaces
+   show wireguard interface
+
+**Peer Commands:**
+
+::
+
+   # Add peer
+   wireguard peer add <interface> \
+     public-key <key> \
+     endpoint <ip> \
+     allowed-ip <cidr> \
+     dst-port <port> \
+     [persistent-keepalive <seconds>]
+
+   # Remove peer
+   wireguard peer remove <peer_idx>
+
+   # Show peers
+   show wireguard peer
+
+**AWG Obfuscation Commands:**
+
+::
+
+   # Enable AWG
+   set wireguard awg <interface> enabled <0|1>
+
+   # Set junk sizes
+   set wireguard awg <interface> junk-size <init|response|cookie|data> <size>
+
+   # Set magic headers
+   set wireguard awg <interface> magic-header <init|response|cookie|data> <value>
+
+   # Set junk packets
+   set wireguard awg <interface> junk-packet-count <count>
+   set wireguard awg <interface> junk-packet-min-size <size>
+   set wireguard awg <interface> junk-packet-max-size <size>
+
+   # Configure i-headers
+   set wireguard i-header <interface> i<1-5> "<tag_string>"
+
+   # Clear i-headers
+   clear wireguard i-header <interface> <i1|i2|i3|i4|i5|all>
+
+   # Show AWG config
+   show wireguard awg <interface>
+
+Troubleshooting
+---------------
+
+**Tunnel Not Establishing:**
+
+::
+
+   # Check peer status
+   vcli-srv show wireguard peer
+   # Look for "last handshake" timestamp
+
+   # Verify connectivity between endpoints
+   vcli-srv ping <peer_endpoint>
+
+   # Check keys match
+   echo $SRV_PUB
+   echo $CLI_PUB
+
+   # Check VPP logs
+   tail -f /tmp/vpp-srv.log
+   tail -f /tmp/vpp-cli.log
+
+**Interface Not Created:**
+
+::
+
+   # Check plugin loaded
+   vcli-srv show plugins | grep wireguard
+   # Should show: wireguard_plugin.so
+
+   # If not loaded, check startup config plugins section
+
+**No Ping Response:**
+
+::
+
+   # Verify interfaces are UP
+   vcli-srv show interface
+   # wg0 should show: admin up, link up
+
+   # Check IP addressing
+   vcli-srv show interface address
+
+   # Verify allowed-ips covers destination
+   vcli-srv show wireguard peer
+
+   # Check if handshake completed
+   vcli-srv show wireguard peer
+   # Should show recent handshake timestamp
+
+**AWG Not Working:**
+
+::
+
+   # Verify AWG enabled
+   vcli-srv show wireguard awg wg0
+   # Should show: Enabled: yes
+
+   # For i-headers: i1 MUST be configured
+   # i-header feature only activates when i1 is set
+
+   # Check tag string syntax
+   vcli-srv set wireguard i-header wg0 i1 "<b 0xc0000000><r 16><c><t>"
+
+**High CPU Usage:**
+
+::
+
+   # Disable obfuscation temporarily
+   vcli-srv set wireguard awg wg0 enabled 0
+
+   # Reduce junk sizes
+   vcli-srv set wireguard awg wg0 junk-size data 0
+   vcli-srv set wireguard awg wg0 junk-packet-count 0
+
+Cleanup
+-------
+
+::
+
+   # Stop VPP
+   sudo killall vpp
+
+   # Delete namespaces
+   sudo ip netns del ns-server
+   sudo ip netns del ns-client
+
+   # Remove temp files
+   rm -rf /tmp/wg-keys /tmp/vpp-*.log /tmp/vpp-*.sock
+   rm /tmp/srv.conf /tmp/cli.conf
+
+Advanced Configuration
+----------------------
+
+**Full Obfuscation Example (QUIC Masquerading):**
+
+::
+
+   # Enable all obfuscation features
+   vcli-srv set wireguard awg wg0 enabled 1
+
+   # i-header chain (mimic QUIC protocol)
+   vcli-srv set wireguard i-header wg0 i1 \
+     "<b 0xc00000000108dcf709c86520ee5ac68b00000000><r 16><c><t>"
+   vcli-srv set wireguard i-header wg0 i2 "<r 32><c>"
+   vcli-srv set wireguard i-header wg0 i3 "<t><r 24>"
+
+   # Junk headers
+   vcli-srv set wireguard awg wg0 junk-size init 32
+   vcli-srv set wireguard awg wg0 junk-size response 32
+   vcli-srv set wireguard awg wg0 junk-size data 16
+
+   # Magic headers
+   vcli-srv set wireguard awg wg0 magic-header init 0x01
+   vcli-srv set wireguard awg wg0 magic-header response 0x02
+   vcli-srv set wireguard awg wg0 magic-header data 0x04
+
+   # Junk packets
+   vcli-srv set wireguard awg wg0 junk-packet-count 5
+   vcli-srv set wireguard awg wg0 junk-packet-min-size 100
+   vcli-srv set wireguard awg wg0 junk-packet-max-size 500
+
+**DNS Masquerading Example:**
+
+::
+
+   # Mimic DNS query packets
+   vcli-srv set wireguard i-header wg0 i1 \
+     "<r 2><b 0x0100000100000000000003777777076578616d706c6503636f6d0000010001><t>"
+   vcli-srv set wireguard i-header wg0 i2 "<r 2><c>"
+
+**TLS Masquerading Example:**
+
+::
+
+   # Mimic TLS Client Hello
+   vcli-srv set wireguard i-header wg0 i1 \
+     "<b 0x1603010200010001fc0303><r 32><b 0x20><r 32><t>"
+   vcli-srv set wireguard i-header wg0 i2 "<r 48><c>"
+
+Performance
+-----------
+
+**Expected Throughput:**
+
+- Software crypto: 1-5 Gbps (depending on CPU)
+- With QAT: 10-40 Gbps (with crypto offload)
+- Latency: < 1ms (local), +0.5ms vs kernel WireGuard
+
+**Overhead:**
+
+- Junk headers: ~1-5%
+- i-headers: Negligible (sent every 120s)
+- Junk packets: ~2-10% (depends on count/size)
+
+**Tuning:**
+
+::
+
+   # More worker threads
+   cpu {
+     main-core 0
+     corelist-workers 1-7  # 7 workers
+   }
+
+   # For max performance, disable obfuscation
+   vcli-srv set wireguard awg wg0 enabled 0
+
+Security Notes
+--------------
+
+**Key Management:**
+
+- Store private keys securely (chmod 600)
+- Use unique keys per peer
+- Rotate keys every 90 days
+
+**Firewall:**
+
+::
+
+   # Allow WireGuard port
+   sudo iptables -A INPUT -p udp --dport 51820 -j ACCEPT
+
+**Obfuscation Limitations:**
+
+- Obfuscation helps evade DPI, not a substitute for encryption
+- WireGuard's cryptographic security unchanged
+- i-headers sent in plaintext (by design)
+
+Crypto Implementation
+---------------------
+
+- blake2s - `BLAKE2 <https://github.com/BLAKE2/BLAKE2>`__
+- curve25519 - OpenSSL
+- chachapoly1305 - OpenSSL
+- Intel QAT - Optional hardware acceleration
+
+License
+-------
+
+Apache License 2.0
+
+Repository
+----------
+
+https://github.com/0xinf0/vpp
+
+Authors
+-------
+
+- Original WireGuard VPP: Cisco, Doc.ai
+- AmneziaWG obfuscation: 0xinf0
+- TCP transport: 0xinf0
+
+References
+----------
+
+- WireGuard: https://www.wireguard.com/
+- AmneziaWG: https://docs.amnezia.org/documentation/amnezia-wg/
+- VPP: https://fd.io/docs/vpp/
 - Statistical traffic analysis
 - WireGuard-specific blocking
 - Timing-based detection
