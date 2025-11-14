@@ -29,6 +29,7 @@ add_library(wireguard_crypto STATIC
     src/wireguard/wireguard_noise.c
     src/wireguard/wireguard_cookie.c
     src/wireguard/wireguard_chachapoly.c
+    src/vnet_crypto_stub.c
 )
 target_link_libraries(wireguard_crypto
     blake2s

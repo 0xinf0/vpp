@@ -20,6 +20,7 @@ typedef struct vlib_main_t vlib_main_t;
 typedef struct vlib_node_runtime_t vlib_node_runtime_t;
 typedef struct vlib_frame_t vlib_frame_t;
 typedef struct vlib_buffer_t vlib_buffer_t;
+typedef struct vlib_node_registration_t vlib_node_registration_t;
 
 /* Minimal vlib_main_t - just enough for time functions */
 struct vlib_main_t
@@ -28,7 +29,27 @@ struct vlib_main_t
 };
 
 /* Stub vlib_main for time queries */
-static vlib_main_t _vlib_main_stub = { 0 };
+static vlib_main_t _vlib_main_stub __attribute__((unused)) = { 0 };
+
+/* Get main instance */
+static_always_inline vlib_main_t *
+vlib_get_main (void)
+{
+  return &_vlib_main_stub;
+}
+
+/* Worker thread barriers (no-op stubs for single-threaded) */
+static_always_inline void
+vlib_worker_thread_barrier_sync (vlib_main_t *vm)
+{
+  (void) vm;
+}
+
+static_always_inline void
+vlib_worker_thread_barrier_release (vlib_main_t *vm)
+{
+  (void) vm;
+}
 
 /* Buffer structure - simplified for standalone */
 struct vlib_buffer_t

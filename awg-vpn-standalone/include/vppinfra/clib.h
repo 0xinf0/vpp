@@ -6,6 +6,23 @@
 #define __included_clib_h__
 
 #include <vppinfra/types.h>
+#include <vppinfra/byte_order.h>
+#include <assert.h>
+#include <stddef.h>
+
+/* Cache line size */
+#define CLIB_CACHE_LINE_BYTES 64
+
+/* Cache line alignment marker */
+#define CLIB_CACHE_LINE_ALIGN_MARK(mark) \
+  u8 mark[0] __attribute__((aligned(CLIB_CACHE_LINE_BYTES)))
+
+/* Struct size macros */
+#define STRUCT_SIZE_OF(t, f) sizeof(((t *) 0)->f)
+#define STRUCT_OFFSET_OF(t, f) offsetof(t, f)
+
+/* Static assert */
+#define STATIC_ASSERT(cond, msg) _Static_assert((cond), msg)
 
 /* Min/Max macros */
 #define clib_min(a, b) ((a) < (b) ? (a) : (b))
