@@ -1,0 +1,525 @@
+╔══════════════════════════════════════════════════════════════════════════════════════════════════════╗
+║                    MINIMAL USERSPACE AWG VPN - COMPLETE ARCHITECTURE DIAGRAM                         ║
+╚══════════════════════════════════════════════════════════════════════════════════════════════════════╝
+
+
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                     APPLICATION LAYER                                                │
+│  ┌────────────────────────────────────────────────────────────────────────────────────────────────┐  │
+│  │  User Applications (web browser, ssh, etc.)                                                    │  │
+│  └────────────────────────────────────┬───────────────────────────────────────────────────────────┘  │
+│                                       │ Standard TCP/IP                                               │
+└───────────────────────────────────────┼───────────────────────────────────────────────────────────────┘
+                                        │
+┌───────────────────────────────────────┼───────────────────────────────────────────────────────────────┐
+│                              KERNEL NETWORK STACK                                                     │
+│  ┌────────────────────────────────────▼───────────────────────────────────────────────────────────┐  │
+│  │  IP Routing, NAT, Firewall                                                                      │  │
+│  └────────────────────────────────────┬───────────────────────────────────────────────────────────┘  │
+│                                       │                                                               │
+│  ┌────────────────────────────────────▼───────────────────────────────────────────────────────────┐  │
+│  │  TUN/TAP Device Driver (/dev/net/tun)                                                          │  │
+│  │  ┌──────────────────────────────────────────────────────────────────────────────────────────┐  │  │
+│  │  │  • Interface: awg0                                                                        │  │  │
+│  │  │  • IP Address: 10.100.0.1/24                                                              │  │  │
+│  │  │  • MTU: 1420 bytes                                                                        │  │  │
+│  │  │  • Mode: TUN (Layer 3, IP packets)                                                        │  │  │
+│  │  └──────────────────────────────────────────────────────────────────────────────────────────┘  │  │
+│  └────────────────────────────────────┬───────────────────────────────────────────────────────────┘  │
+└───────────────────────────────────────┼───────────────────────────────────────────────────────────────┘
+                                        │ read()/write() syscalls
+                                        │
+╔═══════════════════════════════════════╧═══════════════════════════════════════════════════════════════╗
+║                                USERSPACE AWG VPN DAEMON                                               ║
+╠═══════════════════════════════════════════════════════════════════════════════════════════════════════╣
+║                                                                                                       ║
+║  ┌─────────────────────────────────────────────────────────────────────────────────────────────────┐ ║
+║  │                              MAIN EVENT LOOP (C)                                                │ ║
+║  │  ┌───────────────────────────────────────────────────────────────────────────────────────────┐ │ ║
+║  │  │  Event Sources (epoll/kqueue/IOCP):                                                        │ │ ║
+║  │  │  • fd_tun     - TUN device (read: plaintext packets from kernel)                           │ │ ║
+║  │  │  • fd_socket  - UDP/TCP socket (read: encrypted packets from network)                     │ │ ║
+║  │  │  • timer_fd   - Keepalive/handshake timers                                                 │ │ ║
+║  │  └───────────────────────────────────────────────────────────────────────────────────────────┘ │ ║
+║  └─────────────────────────────────────────────────────────────────────────────────────────────────┘ ║
+║                                       │                                                               ║
+║  ╔════════════════════════════════════╧═══════════════════════════════════════════════════╗          ║
+║  ║                          OUTBOUND PATH (TUN → Network)                                 ║          ║
+║  ╚════════════════════════════════════════════════════════════════════════════════════════╝          ║
+║                                       │                                                               ║
+║  ┌────────────────────────────────────▼───────────────────────────────────────────────────────────┐ ║
+║  │  STEP 1: Read from TUN                                                                          │ ║
+║  │  ┌──────────────────────────────────────────────────────────────────────────────────────────┐  │ ║
+║  │  │  read(fd_tun, buffer, 2048)                                                              │  │ ║
+║  │  │  → Get plaintext IP packet (e.g., 192.168.1.10 → 10.100.0.2)                            │  │ ║
+║  │  └──────────────────────────────────────────────────────────────────────────────────────────┘  │ ║
+║  └────────────────────────────────────┬───────────────────────────────────────────────────────────┘ ║
+║                                       │                                                               ║
+║  ┌────────────────────────────────────▼───────────────────────────────────────────────────────────┐ ║
+║  │  STEP 2: Routing Table Lookup (C)                                                              │ ║
+║  │  ┌──────────────────────────────────────────────────────────────────────────────────────────┐  │ ║
+║  │  │  find_peer_by_allowed_ip(dst_ip)                                                         │  │ ║
+║  │  │  • Check peer->allowed_ips[] for longest prefix match                                    │  │ ║
+║  │  │  • Return peer_t* with endpoint info                                                     │  │ ║
+║  │  └──────────────────────────────────────────────────────────────────────────────────────────┘  │ ║
+║  └────────────────────────────────────┬───────────────────────────────────────────────────────────┘ ║
+║                                       │                                                               ║
+║  ┌────────────────────────────────────▼───────────────────────────────────────────────────────────┐ ║
+║  │  STEP 3: AWG Pre-Processing (C)                                                                │ ║
+║  │  ┌──────────────────────────────────────────────────────────────────────────────────────────┐  │ ║
+║  │  │  if (time_since_last_special_hs > 120s && peer->awg_config.i_headers_enabled) {         │  │ ║
+║  │  │      send_i_header_chain(peer);  // i1, i2, i3, i4, i5 packets                          │  │ ║
+║  │  │  }                                                                                         │  │ ║
+║  │  │  if (peer->awg_config.junk_packet_count > 0) {                                           │  │ ║
+║  │  │      send_junk_packets(peer, count);  // Random-size UDP packets                        │  │ ║
+║  │  │  }                                                                                         │  │ ║
+║  │  └──────────────────────────────────────────────────────────────────────────────────────────┘  │ ║
+║  └────────────────────────────────────┬───────────────────────────────────────────────────────────┘ ║
+║                                       │                                                               ║
+║  ┌────────────────────────────────────▼───────────────────────────────────────────────────────────┐ ║
+║  │  STEP 4: WireGuard Encryption (Rust FFI)                                                       │ ║
+║  │  ┌──────────────────────────────────────────────────────────────────────────────────────────┐  │ ║
+║  │  │  rust_encrypt_packet(plaintext, len, key, nonce, ciphertext)                            │  │ ║
+║  │  │  ┌────────────────────────────────────────────────────────────────────────────────────┐ │  │ ║
+║  │  │  │  RUST CRYPTO LIBRARY (memory-safe)                                                 │ │  │ ║
+║  │  │  │  • ChaCha20-Poly1305 encryption                                                     │ │  │ ║
+║  │  │  │  • Increment nonce counter                                                          │ │  │ ║
+║  │  │  │  • Compute authentication tag (16 bytes)                                            │ │  │ ║
+║  │  │  │  • Construct message_data_t:                                                        │ │  │ ║
+║  │  │  │    - type: 0x04 (MESSAGE_DATA)                                                      │ │  │ ║
+║  │  │  │    - receiver_index: peer->local_index                                              │ │  │ ║
+║  │  │  │    - counter: nonce                                                                 │ │  │ ║
+║  │  │  │    - encrypted_data: ciphertext + tag                                               │ │  │ ║
+║  │  │  └────────────────────────────────────────────────────────────────────────────────────┘ │  │ ║
+║  │  └──────────────────────────────────────────────────────────────────────────────────────────┘  │ ║
+║  └────────────────────────────────────┬───────────────────────────────────────────────────────────┘ ║
+║                                       │                                                               ║
+║  ┌────────────────────────────────────▼───────────────────────────────────────────────────────────┐ ║
+║  │  STEP 5: AWG Header Obfuscation (C)                                                            │ ║
+║  │  ┌──────────────────────────────────────────────────────────────────────────────────────────┐  │ ║
+║  │  │  if (peer->awg_config.enabled) {                                                         │  │ ║
+║  │  │      // Replace message type with magic header                                           │  │ ║
+║  │  │      msg->type = peer->awg_config.magic_header[DATA];  // e.g., 0x07 instead of 0x04    │  │ ║
+║  │  │                                                                                           │  │ ║
+║  │  │      // Prepend junk header                                                              │  │ ║
+║  │  │      junk_size = peer->awg_config.transport_header_junk_size;  // e.g., 8 bytes         │  │ ║
+║  │  │      memmove(buffer + junk_size, buffer, len);                                          │  │ ║
+║  │  │      generate_random_bytes(buffer, junk_size);                                          │  │ ║
+║  │  │      len += junk_size;                                                                   │  │ ║
+║  │  │  }                                                                                         │  │ ║
+║  │  └──────────────────────────────────────────────────────────────────────────────────────────┘  │ ║
+║  └────────────────────────────────────┬───────────────────────────────────────────────────────────┘ ║
+║                                       │                                                               ║
+║  ┌────────────────────────────────────▼───────────────────────────────────────────────────────────┐ ║
+║  │  STEP 6: Transport Layer (C)                                                                   │ ║
+║  │  ┌──────────────────────────────────────────────────────────────────────────────────────────┐  │ ║
+║  │  │  switch (peer->transport_type) {                                                         │  │ ║
+║  │  │                                                                                           │  │ ║
+║  │  │  case TRANSPORT_UDP:                                                                     │  │ ║
+║  │  │      // Direct send (no framing needed)                                                  │  │ ║
+║  │  │      sendto(fd_socket, buffer, len, 0, &peer->endpoint, sizeof(peer->endpoint));        │  │ ║
+║  │  │      break;                                                                               │  │ ║
+║  │  │                                                                                           │  │ ║
+║  │  │  case TRANSPORT_TCP:                                                                     │  │ ║
+║  │  │      // Prepend 2-byte length header                                                     │  │ ║
+║  │  │      uint16_t frame_len = htons(len);                                                    │  │ ║
+║  │  │      iov[0] = { &frame_len, 2 };                                                         │  │ ║
+║  │  │      iov[1] = { buffer, len };                                                           │  │ ║
+║  │  │      writev(peer->tcp_fd, iov, 2);                                                       │  │ ║
+║  │  │      break;                                                                               │  │ ║
+║  │  │  }                                                                                         │  │ ║
+║  │  └──────────────────────────────────────────────────────────────────────────────────────────┘  │ ║
+║  └────────────────────────────────────┬───────────────────────────────────────────────────────────┘ ║
+║                                       │ sendto()/write()                                              ║
+║                                       ▼                                                               ║
+║                                Network Interface                                                      ║
+║                                                                                                       ║
+║  ╔════════════════════════════════════╧═══════════════════════════════════════════════════╗          ║
+║  ║                          INBOUND PATH (Network → TUN)                                  ║          ║
+║  ╚════════════════════════════════════════════════════════════════════════════════════════╝          ║
+║                                       │                                                               ║
+║  ┌────────────────────────────────────▼───────────────────────────────────────────────────────────┐ ║
+║  │  STEP 1: Read from Network Socket                                                              │ ║
+║  │  ┌──────────────────────────────────────────────────────────────────────────────────────────┐  │ ║
+║  │  │  if (UDP):                                                                                │  │ ║
+║  │  │      recvfrom(fd_socket, buffer, 2048, 0, &src_addr, &addrlen);                         │  │ ║
+║  │  │                                                                                           │  │ ║
+║  │  │  if (TCP):                                                                                │  │ ║
+║  │  │      // Read 2-byte length prefix                                                        │  │ ║
+║  │  │      read(tcp_fd, &frame_len, 2);                                                        │  │ ║
+║  │  │      len = ntohs(frame_len);                                                             │  │ ║
+║  │  │      // Read exact number of bytes                                                       │  │ ║
+║  │  │      read_full(tcp_fd, buffer, len);                                                     │  │ ║
+║  │  └──────────────────────────────────────────────────────────────────────────────────────────┘  │ ║
+║  └────────────────────────────────────┬───────────────────────────────────────────────────────────┘ ║
+║                                       │                                                               ║
+║  ┌────────────────────────────────────▼───────────────────────────────────────────────────────────┐ ║
+║  │  STEP 2: Peer Lookup (C)                                                                       │ ║
+║  │  ┌──────────────────────────────────────────────────────────────────────────────────────────┐  │ ║
+║  │  │  find_peer_by_endpoint(src_addr, src_port)                                               │  │ ║
+║  │  │  • Hash table lookup or linear search                                                    │  │ ║
+║  │  │  • Update peer->last_seen timestamp                                                      │  │ ║
+║  │  └──────────────────────────────────────────────────────────────────────────────────────────┘  │ ║
+║  └────────────────────────────────────┬───────────────────────────────────────────────────────────┘ ║
+║                                       │                                                               ║
+║  ┌────────────────────────────────────▼───────────────────────────────────────────────────────────┐ ║
+║  │  STEP 3: AWG Deobfuscation (C)                                                                 │ ║
+║  │  ┌──────────────────────────────────────────────────────────────────────────────────────────┐  │ ║
+║  │  │  if (peer->awg_config.enabled) {                                                         │  │ ║
+║  │  │      // Check if this is an i-header packet                                              │  │ ║
+║  │  │      if (is_i_header_packet(buffer, len)) {                                              │  │ ║
+║  │  │          return DISCARD;  // Don't process i-headers                                     │  │ ║
+║  │  │      }                                                                                     │  │ ║
+║  │  │                                                                                           │  │ ║
+║  │  │      // Detect message type from magic header                                            │  │ ║
+║  │  │      msg_type = detect_message_type(peer, buffer[0]);                                   │  │ ║
+║  │  │      if (msg_type == INVALID) return ERROR;                                              │  │ ║
+║  │  │                                                                                           │  │ ║
+║  │  │      // Restore original message type                                                    │  │ ║
+║  │  │      buffer[0] = msg_type;                                                               │  │ ║
+║  │  │                                                                                           │  │ ║
+║  │  │      // Strip junk header                                                                │  │ ║
+║  │  │      junk_size = get_junk_size(peer, msg_type);                                         │  │ ║
+║  │  │      memmove(buffer, buffer + junk_size, len - junk_size);                              │  │ ║
+║  │  │      len -= junk_size;                                                                   │  │ ║
+║  │  │  }                                                                                         │  │ ║
+║  │  └──────────────────────────────────────────────────────────────────────────────────────────┘  │ ║
+║  └────────────────────────────────────┬───────────────────────────────────────────────────────────┘ ║
+║                                       │                                                               ║
+║  ┌────────────────────────────────────▼───────────────────────────────────────────────────────────┐ ║
+║  │  STEP 4: Message Classification (C)                                                            │ ║
+║  │  ┌──────────────────────────────────────────────────────────────────────────────────────────┐  │ ║
+║  │  │  msg = (message_header_t *)buffer;                                                       │  │ ║
+║  │  │  switch (msg->type) {                                                                     │  │ ║
+║  │  │      case MESSAGE_HANDSHAKE_INITIATION:   → process_handshake_init()                    │  │ ║
+║  │  │      case MESSAGE_HANDSHAKE_RESPONSE:     → process_handshake_response()                │  │ ║
+║  │  │      case MESSAGE_HANDSHAKE_COOKIE:       → process_cookie()                            │  │ ║
+║  │  │      case MESSAGE_DATA:                   → decrypt_and_forward()                       │  │ ║
+║  │  │  }                                                                                         │  │ ║
+║  │  └──────────────────────────────────────────────────────────────────────────────────────────┘  │ ║
+║  └────────────────────────────────────┬───────────────────────────────────────────────────────────┘ ║
+║                                       │                                                               ║
+║                                       │ If MESSAGE_DATA:                                              ║
+║  ┌────────────────────────────────────▼───────────────────────────────────────────────────────────┐ ║
+║  │  STEP 5: WireGuard Decryption (Rust FFI)                                                       │ ║
+║  │  ┌──────────────────────────────────────────────────────────────────────────────────────────┐  │ ║
+║  │  │  data_msg = (message_data_t *)buffer;                                                    │  │ ║
+║  │  │  rust_decrypt_packet(                                                                    │  │ ║
+║  │  │      data_msg->encrypted_data,                                                           │  │ ║
+║  │  │      len - sizeof(message_data_t),                                                       │  │ ║
+║  │  │      key, nonce, plaintext                                                               │  │ ║
+║  │  │  );                                                                                       │  │ ║
+║  │  │  ┌────────────────────────────────────────────────────────────────────────────────────┐ │  │ ║
+║  │  │  │  RUST CRYPTO LIBRARY                                                                │ │  │ ║
+║  │  │  │  • ChaCha20-Poly1305 decryption                                                     │ │  │ ║
+║  │  │  │  • Verify authentication tag (MUST match)                                           │ │  │ ║
+║  │  │  │  • Return -EBADMSG if tag verification fails                                        │ │  │ ║
+║  │  │  └────────────────────────────────────────────────────────────────────────────────────┘ │  │ ║
+║  │  └──────────────────────────────────────────────────────────────────────────────────────────┘  │ ║
+║  └────────────────────────────────────┬───────────────────────────────────────────────────────────┘ ║
+║                                       │                                                               ║
+║  ┌────────────────────────────────────▼───────────────────────────────────────────────────────────┐ ║
+║  │  STEP 6: Anti-Replay Check (C)                                                                 │ ║
+║  │  ┌──────────────────────────────────────────────────────────────────────────────────────────┐  │ ║
+║  │  │  if (!check_counter_window(peer, data_msg->counter)) {                                  │  │ ║
+║  │  │      return DISCARD;  // Replay attack detected                                         │  │ ║
+║  │  │  }                                                                                         │  │ ║
+║  │  │  update_counter_window(peer, data_msg->counter);                                        │  │ ║
+║  │  └──────────────────────────────────────────────────────────────────────────────────────────┘  │ ║
+║  └────────────────────────────────────┬───────────────────────────────────────────────────────────┘ ║
+║                                       │                                                               ║
+║  ┌────────────────────────────────────▼───────────────────────────────────────────────────────────┐ ║
+║  │  STEP 7: Allowed-IP Validation (C)                                                             │ ║
+║  │  ┌──────────────────────────────────────────────────────────────────────────────────────────┐  │ ║
+║  │  │  ip_hdr = (ip4_header_t *)plaintext;                                                     │  │ ║
+║  │  │  if (!is_allowed_source_ip(peer, ip_hdr->src_address)) {                                │  │ ║
+║  │  │      return DISCARD;  // Source IP not in peer's allowed-ips                            │  │ ║
+║  │  │  }                                                                                         │  │ ║
+║  │  └──────────────────────────────────────────────────────────────────────────────────────────┘  │ ║
+║  └────────────────────────────────────┬───────────────────────────────────────────────────────────┘ ║
+║                                       │                                                               ║
+║  ┌────────────────────────────────────▼───────────────────────────────────────────────────────────┐ ║
+║  │  STEP 8: Write to TUN                                                                          │ ║
+║  │  ┌──────────────────────────────────────────────────────────────────────────────────────────┐  │ ║
+║  │  │  write(fd_tun, plaintext, plaintext_len);                                                │  │ ║
+║  │  │  → Kernel receives decrypted IP packet                                                   │  │ ║
+║  │  │  → Kernel routes to appropriate application                                              │  │ ║
+║  │  └──────────────────────────────────────────────────────────────────────────────────────────┘  │ ║
+║  └─────────────────────────────────────────────────────────────────────────────────────────────────┘ ║
+║                                                                                                       ║
+╚═══════════════════════════════════════════════════════════════════════════════════════════════════════╝
+
+
+┌───────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                    DATA STRUCTURE RELATIONSHIPS                                       │
+└───────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+┌────────────────────────────────┐
+│      awg_runtime_t             │  Main runtime context
+│  ┌──────────────────────────┐  │
+│  │ • tun_device_t           │──┼──→ TUN interface (fd, IP addr, MTU)
+│  │ • transport_t            │──┼──→ UDP/TCP socket (fd, type, ops)
+│  │ • peer_t[] peers         │──┼──→ Array of peers
+│  │ • awg_processor_t awg    │──┼──→ AWG obfuscation config
+│  │ • routing_table_t routes │──┼──→ Routing table (allowed-ips)
+│  └──────────────────────────┘  │
+└───────┬────────────────────────┘
+        │
+        │ has many
+        ▼
+┌────────────────────────────────┐
+│      peer_t                    │  Per-peer state
+│  ┌──────────────────────────┐  │
+│  │ • public_key[32]         │  │  Peer's public key
+│  │ • endpoint (IP, port)    │  │  Peer's network endpoint
+│  │ • allowed_ips[]          │  │  IP prefixes allowed from this peer
+│  │ • keypair_t current      │──┼──→ Active encryption keypair
+│  │ • keypair_t next         │──┼──→ Next keypair (during rekeying)
+│  │ • counter_window_t       │  │  Anti-replay sliding window
+│  │ • timers[WG_N_TIMERS]    │  │  Timer handles
+│  │ • last_sent_packet       │  │  Timestamp (for keepalive)
+│  │ • obfuscate              │  │  Enable obfuscation for this peer
+│  │ • obfuscation_endpoint   │  │  Fake endpoint for obfuscation
+│  └──────────────────────────┘  │
+└────────────────────────────────┘
+
+
+┌───────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                    THREADING MODEL OPTIONS                                            │
+└───────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+OPTION 1: Single-Threaded Event Loop (Recommended for simplicity)
+═══════════════════════════════════════════════════════════════════
+
+          ┌─────────────────────────────────────────┐
+          │     Main Event Loop Thread              │
+          │  ┌───────────────────────────────────┐  │
+          │  │  epoll_wait() / kqueue()          │  │
+          │  └───────────┬───────────────────────┘  │
+          │              │                           │
+          │      ┌───────┼───────┐                  │
+          │      │               │                   │
+          │      ▼               ▼                   │
+          │  ┌────────┐     ┌────────┐              │
+          │  │  TUN   │     │ Socket │              │
+          │  │ Read   │     │ Read   │              │
+          │  └───┬────┘     └────┬───┘              │
+          │      │               │                   │
+          │      ▼               ▼                   │
+          │  ┌──────────────────────┐                │
+          │  │  Process Packet      │                │
+          │  │  (encrypt/decrypt)   │                │
+          │  └──────────────────────┘                │
+          └─────────────────────────────────────────┘
+
+Pros: Simple, no locking, predictable latency
+Cons: Single-core utilization, blocking crypto
+
+
+OPTION 2: Multi-Threaded Pipeline (Recommended for performance)
+═══════════════════════════════════════════════════════════════════
+
+┌────────────┐      ┌──────────────────────┐      ┌─────────────┐
+│ TUN Reader │─────▶│   Lock-Free Queue    │─────▶│   Crypto    │
+│   Thread   │      │  (plaintext packets) │      │   Thread    │
+└────────────┘      └──────────────────────┘      │   Pool      │
+                                                   │  (4 threads)│
+                                                   └──────┬──────┘
+                                                          │
+                    ┌──────────────────────┐             │
+                    │   Lock-Free Queue    │◀────────────┘
+                    │ (encrypted packets)  │
+                    └──────────┬───────────┘
+                               │
+                               ▼
+                    ┌──────────────────┐
+                    │ Network Sender   │
+                    │    Thread        │
+                    └──────────────────┘
+
+┌────────────────┐      ┌──────────────────────┐      ┌─────────────┐
+│ Network Reader │─────▶│   Lock-Free Queue    │─────▶│   Crypto    │
+│    Thread      │      │ (encrypted packets)  │      │   Thread    │
+└────────────────┘      └──────────────────────┘      │   Pool      │
+                                                       │  (4 threads)│
+                                                       └──────┬──────┘
+                                                              │
+                      ┌──────────────────────┐               │
+                      │   Lock-Free Queue    │◀──────────────┘
+                      │  (plaintext packets) │
+                      └──────────┬───────────┘
+                                 │
+                                 ▼
+                      ┌──────────────────┐
+                      │   TUN Writer     │
+                      │    Thread        │
+                      └──────────────────┘
+
+Pros: Multi-core utilization, high throughput
+Cons: Complexity, cache coherency overhead, thread synchronization
+
+
+OPTION 3: Hybrid (Event loop + worker pool)
+═══════════════════════════════════════════════════════════════════
+
+          ┌─────────────────────────────────────────┐
+          │     Main Event Loop Thread              │
+          │  ┌───────────────────────────────────┐  │
+          │  │  I/O only (no blocking crypto)    │  │
+          │  └───────────┬───────────────────────┘  │
+          │              │                           │
+          │              ▼                           │
+          │   ┌────────────────────┐                │
+          │   │ Submit to worker   │                │
+          │   │      pool          │                │
+          │   └────────┬───────────┘                │
+          └────────────┼───────────────────────────┘
+                       │
+                       ▼
+          ┌─────────────────────────────────────────┐
+          │   Worker Thread Pool (4-8 threads)      │
+          │  ┌───────────────────────────────────┐  │
+          │  │  Crypto operations                │  │
+          │  │  (ChaCha20-Poly1305)              │  │
+          │  └───────────┬───────────────────────┘  │
+          └──────────────┼───────────────────────────┘
+                         │ callback on completion
+                         ▼
+          ┌─────────────────────────────────────────┐
+          │     Main Event Loop Thread              │
+          │  (Send/Write completed packet)          │
+          └─────────────────────────────────────────┘
+
+Pros: Balance between simplicity and performance
+Cons: Still requires some synchronization
+
+
+┌───────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                  MEMORY LAYOUT EXAMPLE                                                │
+└───────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+Outbound Packet Transformation:
+────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+INPUT (from TUN):
+┌─────────────┬──────────┬─────────────────────────────────┬──────┐
+│  IP Header  │   TCP    │       Payload (e.g., HTTP)      │      │
+│  (20 bytes) │  Header  │         (1400 bytes)            │      │
+│             │ (20 bytes)│                                 │      │
+└─────────────┴──────────┴─────────────────────────────────┴──────┘
+  Total: 1440 bytes (plaintext IP packet)
+
+After ChaCha20-Poly1305 Encryption:
+┌───────┬─────────┬─────────┬───────────────────────────────┬──────┐
+│ Type  │ Receiver│ Counter │   Encrypted Data (1440 bytes)│ Tag  │
+│(1B:04)│ Index   │  (8B)   │                               │(16B) │
+│       │  (4B)   │         │                               │      │
+└───────┴─────────┴─────────┴───────────────────────────────┴──────┘
+  message_data_t: 4 + 4 + 8 + 1440 + 16 = 1472 bytes
+
+After AWG Obfuscation (junk_size=8, magic_header=0x07):
+┌───────────────┬───────┬─────────┬─────────┬───────────────┬──────┐
+│  Junk Header  │ Type  │ Receiver│ Counter │  Encrypted    │ Tag  │
+│ (8B random)   │(1B:07)│ Index   │  (8B)   │  Data (1440B) │(16B) │
+│               │       │  (4B)   │         │               │      │
+└───────────────┴───────┴─────────┴─────────┴───────────────┴──────┘
+  Total: 8 + 1472 = 1480 bytes
+
+After UDP Encapsulation:
+┌────────────┬────────────┬───────────────┬──────────────────────────┐
+│ IP Header  │ UDP Header │ Junk (8B)     │  WireGuard Message       │
+│ (20 bytes) │ (8 bytes)  │               │  (1472 bytes)            │
+└────────────┴────────────┴───────────────┴──────────────────────────┘
+  Total: 20 + 8 + 1480 = 1508 bytes (on wire)
+
+After TCP Encapsulation (alternative):
+┌────────────┬────────────┬─────────┬───────────────┬──────────────┐
+│ IP Header  │ TCP Header │ Len (2B)│ Junk (8B)     │  WireGuard   │
+│ (20 bytes) │ (20+ bytes)│         │               │  Msg (1472B) │
+└────────────┴────────────┴─────────┴───────────────┴──────────────┘
+  Total: 20 + 20 + 2 + 1480 = 1522 bytes (on wire)
+
+
+┌───────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                    TIMER MANAGEMENT                                                   │
+└───────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+Per-Peer Timers:
+════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+1. Persistent Keepalive Timer (TIMER_PERSISTENT_KEEPALIVE)
+   - Interval: Configurable (e.g., 25 seconds)
+   - Purpose: Send empty data packets to keep NAT mappings alive
+   - Trigger: If no packet sent in last N seconds
+
+2. Handshake Retry Timer (TIMER_RETRANSMIT_HANDSHAKE)
+   - Interval: Exponential backoff (1s, 2s, 4s, 8s, 16s, max 90s)
+   - Purpose: Retry handshake if no response received
+   - Max attempts: 20 (then mark peer as dead)
+
+3. Key Rotation Timer (TIMER_REKEY)
+   - Interval: 120 seconds (REKEY_AFTER_TIME)
+   - Purpose: Initiate new handshake to rotate keys
+   - Trigger: Current keypair approaching limits
+
+4. Zero-Second Keepalive Timer (TIMER_ZERO_KEY_MATERIAL)
+   - Interval: 3 seconds after session establishment
+   - Purpose: Send first data packet after handshake
+   - One-shot timer
+
+5. New Handshake Timer (TIMER_NEW_HANDSHAKE)
+   - Interval: 90 seconds after last handshake
+   - Purpose: Force new handshake if none received
+   - Prevents indefinite use of old keys
+
+AWG-Specific Timer:
+════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+6. Special Handshake Timer (AWG_TIMER_SPECIAL_HANDSHAKE)
+   - Interval: 120 seconds (fixed)
+   - Purpose: Send i-header chain (i1-i5) for protocol masquerading
+   - Only active if peer->awg_config.i_headers_enabled
+
+
+┌───────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                              PERFORMANCE OPTIMIZATION TECHNIQUES                                      │
+└───────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+1. Zero-Copy Packet Processing
+   ═════════════════════════════════════════════════════════════════════════════════════════════════════
+   • Use packet buffers from memory pool (pre-allocated)
+   • Avoid memcpy where possible
+   • Use scatter-gather I/O (readv/writev)
+   • mmap() for TUN device (on supported platforms)
+
+2. Batched I/O Operations
+   ═════════════════════════════════════════════════════════════════════════════════════════════════════
+   • recvmmsg()/sendmmsg() on Linux (process multiple packets per syscall)
+   • Batch crypto operations (amortize function call overhead)
+   • Process multiple packets before returning to event loop
+
+3. SIMD Optimizations
+   ═════════════════════════════════════════════════════════════════════════════════════════════════════
+   • ChaCha20 using AVX2/AVX-512 (x86-64)
+   • Poly1305 using NEON (ARM)
+   • Auto-detection of CPU features at runtime
+
+4. Lock-Free Data Structures
+   ═════════════════════════════════════════════════════════════════════════════════════════════════════
+   • SPSC (single-producer, single-consumer) ring buffers
+   • No mutex overhead between threads
+   • Cache-line padding to avoid false sharing
+
+5. Huge Pages (Linux)
+   ═════════════════════════════════════════════════════════════════════════════════════════════════════
+   • Allocate packet buffers from huge pages
+   • Reduce TLB misses
+   • Improve cache efficiency
+
+6. CPU Affinity
+   ═════════════════════════════════════════════════════════════════════════════════════════════════════
+   • Pin threads to specific CPU cores
+   • Avoid cross-NUMA node memory access
+   • Improve L1/L2 cache hit rate
+
+
